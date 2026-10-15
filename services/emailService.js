@@ -1,58 +1,68 @@
-const cron = require('node-cron');
-const User = require('../models/User');
-const { fetchComicsCountBySeriesId } = require('../services/marvelService');
-const sgMail = require('@sendgrid/mail');
-sgMail.setApiKey(process.env.SENDGRID_API_KEY); 
+const { fetchComicsCountBySeriesId, detectChapterDelta } = require('../services/marvelService');
 
-//This file utilizes Send Grid to send emails. 
+let sgMail = null;
+try {
+    sgMail = require('@sendgrid/mail');
+    if (process.env.SENDGRID_API_KEY) {
+        sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+    }
+} catch (_) {
+    sgMail = null;
+}
+
+function getDefaultUserModel() {
+    return require('../models/User');
+}
+
+function escapeHtml(str) {
+    return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 async function sendEmail(to, subject, htmlContent) {
-    // sets up message schema 
     const msg = {
         to,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@comicsubscription.local',
         subject,
         html: htmlContent,
     };
-    //calls send email method and logs success/failure in console
     try {
-        await sgMail.send(msg);
+        if (sgMail) {
+            await sgMail.send(msg);
+        }
         console.log('Email sent to:', to);
     } catch (error) {
         console.error('Error sending email:', error.response ? error.response.body : error.message);
     }
 }
 
+// Check for new chapters for each user using detectChapterDelta
+async function checkForNewChapters(deps = {}) {
+    const userModel = deps.userModel || getDefaultUserModel();
+    const fetchCountFn = deps.fetchCountFn || fetchComicsCountBySeriesId;
+    const notifyFn = deps.notifyFn || sendEmailNotification;
 
-// This function will check for new chapters for each user
-async function checkForNewChapters() {
     try {
-        const users = await User.find(); // Get all users
+        const users = await userModel.find();
 
-        //Iterate through all users 
         for (const user of users) {
-            let newChaptersFound = false;
-            let newSeriesList = [];
-
-            //iterates through the series the current user has
-            for (const series of user.comicSeries) {
-                //fetches the comic count based off series ID
-                const currentComicsCount = await fetchComicsCountBySeriesId(series.seriesId);
-                
-                // Only trigger notification when actual new issues have been published
-                if (currentComicsCount > series.chapters) {
-                    newChaptersFound = true;
-                    newSeriesList.push({ title: series.title, newChapters: currentComicsCount - series.chapters });
-                    
-                    // Update the stored number of chapters for this series
-                    series.chapters = currentComicsCount;
-                }
+            const latestCounts = {};
+            for (const series of user.comicSeries || []) {
+                latestCounts[series.seriesId] = await fetchCountFn(series.seriesId);
             }
 
-            // If new chapters are found, send an email to the user
-            if (newChaptersFound) {
-                await sendEmailNotification(user.email, newSeriesList);
-                await user.save(); // Save updated chapters count to the database
+            const { updates, updatedSeries } = detectChapterDelta(user.comicSeries || [], latestCounts);
+
+            if (updates.length > 0) {
+                for (let i = 0; i < (user.comicSeries || []).length; i += 1) {
+                    user.comicSeries[i].chapters = updatedSeries[i].chapters;
+                }
+                await notifyFn(user.email, updates);
+                await user.save();
             }
         }
     } catch (error) {
@@ -61,26 +71,22 @@ async function checkForNewChapters() {
 }
 
 // Function to send email when new chapters are found
-async function sendEmailNotification(email, newSeriesList) {
+async function sendEmailNotification(email, newSeriesList, sendFn = sendEmail) {
     const subject = 'New Chapters Available for Your Subscribed Series';
     let htmlContent = '<p>The following series have new chapters available:</p><ul>';
-    
-    //Iterates through the new series and appends this data to the email 
-    newSeriesList.forEach(series => {
-        htmlContent += `<li>${series.title} - ${series.newChapters} new chapter(s)</li>`;
+
+    (newSeriesList || []).forEach((series) => {
+        htmlContent += `<li>${escapeHtml(series.title)} - ${Number(series.newChapters) || 0} new chapter(s)</li>`;
     });
-    
-    await sendEmail(email, subject, htmlContent);
+    htmlContent += '</ul>';
+
+    await sendFn(email, subject, htmlContent);
+    return { to: email, subject, html: htmlContent };
 }
 
-// Function to check daily, not active right now. 
-// cron.schedule('0 0 * * *', () => {
-//     console.log('Running daily check for new chapters');
-//     checkForNewChapters();
-// });
-
-module.exports ={
+module.exports = {
     checkForNewChapters,
-    sendEmailNotification
+    sendEmailNotification,
+    escapeHtml,
+};
 
-}; 
