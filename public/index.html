@@ -1,0 +1,42 @@
+<!-- This file is the main html page for the website -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comic Subscription</title>
+    <link rel="stylesheet" href="\css\style.css">
+</head>
+<body>
+    <h1>Subscribe to Your Favorite Comic Series</h1>
+    <form id="signup-form">
+        <!-- Place to enter details -->
+        <div class="form-group">
+            <label for="email">Email:</label>
+            <input type="email" id="email" placeholder="Enter your email" required>
+        </div>
+        <div class="form-group">
+            <label for="phone">Phone Number:</label>
+            <input type="tel" id="phone" placeholder="Enter your phone number" required>
+        </div>
+        <!-- Place to put in characters -->
+        <div class="form-group">
+            <label for="character">Enter Favorite Character:</label>
+            <input type="text" id="character" placeholder="Enter character name" required>
+        </div>
+
+        <!-- Button!! -->
+        <button type="button" id="search-character">Search Character</button>
+
+        <!-- This is how we track the series' the person hopes to follow -->
+        <div class="checkbox-group" id="series-list" style="display: none;">
+            <label for="series">Select Comic Series:</label>
+            <div id="series-checkboxes"></div>
+        </div>
+
+        <button type="submit" style="display: none;" id="subscribe-button">Subscribe</button>
+    </form>
+
+    <script type = "module" src="js/app.js"></script>
+</body>
+</html>
