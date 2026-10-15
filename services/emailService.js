@@ -39,9 +39,8 @@ async function checkForNewChapters() {
                 //fetches the comic count based off series ID
                 const currentComicsCount = await fetchComicsCountBySeriesId(series.seriesId);
                 
-                //To show case the email, I have a + 1 to ensure the boolean is true and the email is sent
-                if (currentComicsCount+2 > series.chapters) {
-                    // 
+                // Only trigger notification when actual new issues have been published
+                if (currentComicsCount > series.chapters) {
                     newChaptersFound = true;
                     newSeriesList.push({ title: series.title, newChapters: currentComicsCount - series.chapters });
                     
