@@ -1,94 +1,116 @@
-const axios = require('axios');
 const crypto = require('crypto');
-const publicKey = process.env.MARVEL_PUBLIC_KEY;
-const privateKey = process.env.MARVEL_PRIVATE_KEY;
-//the basic URL we build off of, allows for less typing 
-const baseURL = 'https://gateway.marvel.com/v1/public';
-
-// Marvel requires a hash function to be able to send a request, this is that, it uses 'md5'.
-function generateHash(ts) {
-    return crypto.createHash('md5').update(ts + privateKey + publicKey).digest('hex');
+let axios = null;
+try {
+    axios = require('axios');
+} catch (_) {
+    axios = null;
 }
 
+const publicKey = process.env.MARVEL_PUBLIC_KEY || '';
+const privateKey = process.env.MARVEL_PRIVATE_KEY || '';
+const baseURL = 'https://gateway.marvel.com/v1/public';
 
-async function fetchCharacterByName(characterName) {
-    //timestamps are also needed for the api request
+function generateHash(ts, privKey = privateKey, pubKey = publicKey) {
+    return crypto
+        .createHash('md5')
+        .update(`${ts}${privKey ?? ''}${pubKey ?? ''}`)
+        .digest('hex');
+}
+
+/**
+ * Compare a user's stored comicSeries subscriptions against newly fetched counts.
+ * Ignores non-finite or zero/negative error counts when the stored count is positive,
+ * and only triggers notifications when latestCount > storedChapters.
+ */
+function detectChapterDelta(storedSeriesList, latestCountsBySeriesId) {
+    if (!Array.isArray(storedSeriesList)) {
+        return { updates: [], updatedSeries: [] };
+    }
+    const countsMap =
+        latestCountsBySeriesId instanceof Map
+            ? latestCountsBySeriesId
+            : new Map(Object.entries(latestCountsBySeriesId || {}));
+
+    const updates = [];
+    const updatedSeries = storedSeriesList.map((series) => {
+        const copy = { ...series };
+        const key = String(series.seriesId);
+        const rawLatest = countsMap.has(series.seriesId)
+            ? countsMap.get(series.seriesId)
+            : countsMap.get(key);
+        const latestCount = Number(rawLatest);
+        const prevChapters = Number(series.chapters) || 0;
+
+        if (Number.isFinite(latestCount) && latestCount > prevChapters) {
+            updates.push({
+                seriesId: series.seriesId,
+                title: series.title,
+                newChapters: latestCount - prevChapters,
+                previousChapters: prevChapters,
+                currentChapters: latestCount,
+            });
+            copy.chapters = latestCount;
+        }
+        return copy;
+    });
+
+    return { updates, updatedSeries };
+}
+
+async function fetchCharacterByName(characterName, httpClient = axios) {
     const ts = new Date().getTime();
-    // generates hash from the derails
     const hash = generateHash(ts);
 
     try {
-        //gets the character using the marvel API 
-        const response = await axios.get(`${baseURL}/characters`, {
-            
-            params: { name: characterName, ts, apikey: publicKey, hash }
+        const response = await httpClient.get(`${baseURL}/characters`, {
+            params: { name: characterName, ts, apikey: publicKey, hash },
         });
-
-        // stores the characters
         const characters = response.data.data.results;
-        
         if (characters.length === 0) {
-            console.log(`Character ${characterName} not found.`);
             return null;
-        } else {
-            //stores the ID for the character 
-            const characterId = characters[0].id;
-            console.log(`Character ID for ${characterName}: ${characterId}`);
-            return characterId;
         }
+        return characters[0].id;
     } catch (error) {
         console.error('Error fetching character:', error.response?.data || error.message);
         return null;
     }
 }
 
-async function fetchSeriesByCharacterId(characterId) {
-    //timestamps are also needed for the api request
+async function fetchSeriesByCharacterId(characterId, httpClient = axios) {
     const ts = new Date().getTime();
-     // generates hash from the derails
     const hash = generateHash(ts);
 
     try {
-        // sends a  request for the series 
-        const response = await axios.get(`${baseURL}/characters/${characterId}/series`, {
-            params: { ts, apikey: publicKey, hash }
+        const response = await httpClient.get(`${baseURL}/characters/${characterId}/series`, {
+            params: { ts, apikey: publicKey, hash },
         });
-
-        //gets the list of series' 
         const seriesList = response.data.data.results;
-        // 
-        if (seriesList.length === 0) {
-            console.log('No series found for this character.');
-            return [];
-        } else {
-            console.log('Series List:', seriesList.map(series => series.title));
-            return seriesList;
-        }
+        return seriesList.length === 0 ? [] : seriesList;
     } catch (error) {
         console.error('Error fetching series:', error.response?.data || error.message);
         return [];
     }
 }
 
-async function fetchComicsCountBySeriesId(seriesId) {
+async function fetchComicsCountBySeriesId(seriesId, httpClient = axios) {
     const ts = new Date().getTime();
     const hash = generateHash(ts);
 
     try {
-        const response = await axios.get(`${baseURL}/series/${seriesId}/comics`, {
-            params: { ts, apikey: publicKey, hash }
+        const response = await httpClient.get(`${baseURL}/series/${seriesId}/comics`, {
+            params: { ts, apikey: publicKey, hash },
         });
-
-        const comicsList = response.data.data.results;
-        const comicsCount = response.data.data.total; // Total number of comics
-        console.log(`Series ID ${seriesId} has ${comicsCount} comics (chapters).`);
-        return comicsCount;
+        return response.data.data.total;
     } catch (error) {
         console.error('Error fetching comics:', error.response?.data || error.message);
         return 0;
     }
 }
 
-
-
-module.exports = { fetchCharacterByName, fetchSeriesByCharacterId, fetchComicsCountBySeriesId };
+module.exports = {
+    generateHash,
+    detectChapterDelta,
+    fetchCharacterByName,
+    fetchSeriesByCharacterId,
+    fetchComicsCountBySeriesId,
+};
