@@ -36,3 +36,44 @@ test('detectChapterDelta reports only strictly positive issue increases and pres
     assert.equal(updatedSeries[1].chapters, 8);
     assert.equal(updatedSeries[2].chapters, 20);
 });
+
+test('sendEmailNotification closes <ul> and escapes HTML in series titles, and checkForNewChapters integrates detectChapterDelta', async () => {
+    const { checkForNewChapters, sendEmailNotification } = require('../services/emailService');
+    const sent = [];
+    const payload = await sendEmailNotification(
+        'reader@example.com',
+        [{ title: 'Spider-Man & <Friends>', newChapters: 2 }],
+        async (to, subject, html) => {
+            sent.push({ to, subject, html });
+        }
+    );
+    assert.equal(sent.length, 1);
+    assert.ok(payload.html.endsWith('</ul>'));
+    assert.ok(payload.html.includes('Spider-Man &amp; &lt;Friends&gt; - 2 new chapter(s)'));
+
+    let saved = false;
+    const fakeUser = {
+        email: 'sub@example.com',
+        comicSeries: [
+            { seriesId: 10, title: 'X-Men', chapters: 5 },
+            { seriesId: 20, title: 'Avengers', chapters: 10 },
+        ],
+        async save() {
+            saved = true;
+        },
+    };
+    const notifications = [];
+    await checkForNewChapters({
+        userModel: { find: async () => [fakeUser] },
+        fetchCountFn: async (id) => (id === 10 ? 7 : 0),
+        notifyFn: async (email, updates) => {
+            notifications.push({ email, updates });
+        },
+    });
+    assert.equal(saved, true);
+    assert.equal(fakeUser.comicSeries[0].chapters, 7);
+    assert.equal(fakeUser.comicSeries[1].chapters, 10);
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].updates[0].newChapters, 2);
+});
+
